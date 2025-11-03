@@ -1,0 +1,100 @@
+name: 日常构建
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 0 * * *"  # 每天凌晨 0 点（UTC）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建并发布
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 安装 Flutter 依赖
+        run: flutter pub get
+
+      - name: 生成 Rust 桥接代码
+        run: |
+          cargo install rinf_cli
+          rinf gen
+
+      - name: 生成多语言文件
+        run: dart run slang
+
+      - name: 构建 Windows 版本
+        run: flutter build windows --release
+
+      - name: 生成版本标签
+        id: tag
+        run: |
+          $datetime = Get-Date -Format "yyyy.MM.dd.HH.mm"
+          $tag = "v$datetime"
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "datetime=$datetime" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: 打包构建产物
+        run: |
+          cd build/windows/x64/runner/Release
+          Compress-Archive -Path * -DestinationPath ../../../../../loopback_manager-windows-x64.zip
+        shell: pwsh
+
+      - name: 上传构建产物到 Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopback_manager-windows-x64-${{ steps.tag.outputs.tag }}
+          path: loopback_manager-windows-x64.zip
+          retention-days: 90
+
+      - name: 创建 Git 标签
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.tag.outputs.tag }}
+          git push origin ${{ steps.tag.outputs.tag }}
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: 日常构建 ${{ steps.tag.outputs.datetime }}
+          body: |
+            ## 🚀 日常自动构建
+
+            **构建时间**: ${{ steps.tag.outputs.datetime }}
+            **提交哈希**: ${{ github.sha }}
+
+            ### 📦 下载
+            - Windows x64 版本
+
+            ### ⚠️ 注意
+            这是自动构建版本，可能包含未充分测试的功能。
+
+            ---
+            自动生成于 GitHub Actions
+          files: loopback_manager-windows-x64.zip
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

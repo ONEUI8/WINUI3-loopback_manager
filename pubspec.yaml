@@ -1,0 +1,35 @@
+name: loopback_manager
+description: Windows Loopback Exemption Manager - Flutter Edition
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  fluent_ui: ^4.9.1
+  ffi: ^2.1.0
+  win32: ^5.5.0
+  provider: ^6.1.1
+  shared_preferences: ^2.2.2
+  rinf: ^8.7.2
+  meta: ^1.16.0
+  tuple: ^2.0.2
+  bitsdojo_window: ^0.1.6
+  window_manager: ^0.5.1
+  slang: ^4.8.1
+  slang_flutter: ^4.8.0
+  flutter_localizations:
+    sdk: flutter
+  intl: ^0.20.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  slang_build_runner: ^4.8.0
+
+flutter:
+  uses-material-design: true

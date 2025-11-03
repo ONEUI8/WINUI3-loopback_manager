@@ -1,0 +1,19 @@
+base_locale: zh_CN
+fallback_strategy: base_locale
+input_directory: lib/i18n
+input_file_pattern: .i18n.json
+output_directory: lib/i18n
+output_file_name: translations.g.dart
+output_format: single_file
+locale_handling: true
+flatten_translations: false
+translation_class_visibility: public
+key_case: snake
+key_map_case: camel
+param_case: pascal
+string_interpolation: double_braces
+flat_map: false
+timestamp: true
+maps:
+  - error
+  - success

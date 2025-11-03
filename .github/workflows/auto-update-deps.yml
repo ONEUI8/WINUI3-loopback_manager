@@ -1,0 +1,70 @@
+name: 自动更新依赖
+
+on:
+  schedule:
+    - cron: "0 21 * * *"  # 每天早上 5 点（UTC+8）= UTC 21 点
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-deps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 更新 Flutter 依赖
+        run: |
+          flutter pub upgrade
+          flutter pub outdated || true
+
+      - name: 更新 Rust 依赖
+        run: cargo update --manifest-path native/hub/Cargo.toml
+
+      - name: 检查依赖文件是否有变更
+        id: check_deps
+        run: |
+          git diff --quiet pubspec.lock native/hub/Cargo.lock && echo "has_changes=false" >> $GITHUB_OUTPUT || echo "has_changes=true" >> $GITHUB_OUTPUT
+
+      - name: 生成 Rust 桥接代码
+        if: steps.check_deps.outputs.has_changes == 'true'
+        run: cargo install rinf_cli && rinf gen
+
+      - name: 生成多语言文件
+        if: steps.check_deps.outputs.has_changes == 'true'
+        run: dart run slang
+
+      - name: 检查 Flutter 代码可行性
+        if: steps.check_deps.outputs.has_changes == 'true'
+        run: flutter analyze
+
+      - name: 检查 Rust 代码可行性
+        if: steps.check_deps.outputs.has_changes == 'true'
+        run: cargo check --manifest-path native/hub/Cargo.toml
+
+      - name: 提交并推送变更
+        if: steps.check_deps.outputs.has_changes == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "chore(deps): 自动更新 Flutter 与 Rust 依赖"
+          git push
+
+      - name: 无需更新
+        if: steps.check_deps.outputs.has_changes == 'false'
+        run: echo "✅ 依赖文件无变更，跳过更新。"

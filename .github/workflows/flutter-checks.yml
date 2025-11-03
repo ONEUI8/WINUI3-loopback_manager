@@ -1,0 +1,41 @@
+name: Flutter 检查
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  flutter-checks:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: 安装 Flutter 依赖
+        run: flutter pub get
+
+      - name: 生成 Rust 桥接代码
+        run: cargo install rinf_cli && rinf gen
+
+      - name: 生成多语言文件
+        run: dart run slang
+
+      - name: 检查 Dart 代码格式
+        run: |
+          if ! dart format --output=none --set-exit-if-changed .; then
+            echo "⚠️ Dart 代码格式不规范，请运行 'dart format .' 修复。"
+          fi
+
+      - name: 运行 Flutter 静态分析
+        run: flutter analyze

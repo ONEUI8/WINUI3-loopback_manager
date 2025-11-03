@@ -1,0 +1,105 @@
+name: 发布正式版
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号 (例如: 1.0.0)'
+        required: true
+        type: string
+      create_release:
+        description: '是否创建 GitHub Release'
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: false
+
+      - name: 配置 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: 获取应用版本
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.event.inputs.version }}" -ne "") {
+            $version = "${{ github.event.inputs.version }}"
+            echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+            echo "Version (manual): $version"
+          } else {
+            $content = Get-Content pubspec.yaml
+            $version = ($content | Select-String 'version: (.+)').Matches.Groups[1].Value
+            $version = $version.Split('+')[0]
+            echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+            echo "Version (from pubspec): $version"
+          }
+
+      - name: 安装 Flutter 依赖
+        run: flutter pub get
+
+      - name: 生成 Rust 桥接代码
+        run: cargo install rinf_cli && rinf gen
+
+      - name: 生成多语言文件
+        run: dart run slang
+
+      - name: 构建 Windows x64
+        run: flutter build windows --release
+
+      - name: 创建发布压缩包
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}"
+          $archiveName = "loopback_manager_windows_x64_${version}.zip"
+          
+          $buildPath = "build/windows/x64/runner/Release"
+          if (-not (Test-Path $buildPath)) {
+            Write-Error "Build path not found: $buildPath"
+            exit 1
+          }
+          
+          cd $buildPath
+          Compress-Archive -Path * -DestinationPath "../../../../../$archiveName"
+          cd ../../../../../
+          
+          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
+          echo "Archive created: $archiveName"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: loopback_manager_windows_x64
+          path: ${{ env.ARCHIVE_NAME }}
+
+      - name: 创建发布
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', steps.version.outputs.VERSION) || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && format('Release v{0}', steps.version.outputs.VERSION) || github.ref_name }}
+          files: ${{ env.ARCHIVE_NAME }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
