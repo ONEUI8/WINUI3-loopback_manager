@@ -34,7 +34,7 @@ jobs:
       - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master  # master 通道支持 Windows ARM64
+          channel: master 
           cache: false
 
       - name: 配置 Rust
@@ -53,20 +53,8 @@ jobs:
       - name: 生成多语言文件
         run: dart run slang
 
-      - name: 诊断 Flutter 环境
-        run: flutter doctor -v
-
-      - name: 显示 Rust 工具链信息
-        run: |
-          rustc --version
-          cargo --version
-          rustup show
-
       - name: 构建 Windows 版本
-        run: flutter build windows --release -v
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.rust-target }}
-          FLUTTER_TARGET_PLATFORM: ${{ matrix.arch == 'arm64' && 'windows' || format('windows-{0}', matrix.arch) }}
+        run: flutter build windows --release
 
       - name: 生成版本标签
         id: tag
