@@ -38,6 +38,10 @@ jobs:
       - name: 配置 Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: 设置 Rust 目标（ARM64）
+        if: matrix.arch == 'arm64'
+        run: rustup target add aarch64-pc-windows-msvc
+
       - name: 安装 Flutter 依赖
         run: flutter pub get
 
@@ -111,7 +115,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ ARM64 任务：等 x64 发布完后，追加上传 ARM64 产物
+      # ✅ ARM64 任务：追加上传产物到已存在的 Release
       - name: 附加上传 ARM64 版本到 Release
         if: matrix.arch == 'arm64'
         uses: softprops/action-gh-release@v1
