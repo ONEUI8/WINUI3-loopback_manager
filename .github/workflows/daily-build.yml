@@ -13,16 +13,26 @@ permissions:
 
 jobs:
   build:
-    name: 构建并发布
+    name: 构建 ${{ matrix.arch }} (${{ matrix.mode }})
     strategy:
       matrix:
         include:
           - arch: x64
             runs-on: windows-latest
             rust-target: x86_64-pc-windows-msvc
+            mode: release
+          - arch: x64
+            runs-on: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            mode: debug
           - arch: arm64
             runs-on: windows-11-arm
             rust-target: aarch64-pc-windows-msvc
+            mode: release
+          - arch: arm64
+            runs-on: windows-11-arm
+            rust-target: aarch64-pc-windows-msvc
+            mode: debug
     runs-on: ${{ matrix.runs-on }}
 
     steps:
@@ -34,7 +44,7 @@ jobs:
       - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: master 
+          channel: master
           cache: false
 
       - name: 配置 Rust
@@ -53,43 +63,56 @@ jobs:
       - name: 生成多语言文件
         run: dart run slang
 
-      - name: 构建 Windows 版本
-        run: flutter build windows --release -v
-
-      - name: 生成版本标签
-        id: tag
-        run: |
-          $datetime = Get-Date -Format "yyyy.MM.dd.HH.mm"
-          $tag = "v$datetime"
-          echo "tag=$tag" >> $env:GITHUB_OUTPUT
-          echo "datetime=$datetime" >> $env:GITHUB_OUTPUT
-        shell: pwsh
+      - name: 构建 Windows 版本 (${{ matrix.mode }})
+        run: flutter build windows --${{ matrix.mode }} -v
 
       - name: 打包构建产物
         run: |
-          cd build/windows/${{ matrix.arch }}/runner/Release
-          Compress-Archive -Path * -DestinationPath ../../../../../loopback_manager-windows-${{ matrix.arch }}.zip
+          $suffix = if ("${{ matrix.mode }}" -eq "debug") { "-debug" } else { "" }
+          $zipName = "loopback_manager-windows-${{ matrix.arch }}$suffix.zip"
+          $buildPath = if ("${{ matrix.mode }}" -eq "debug") { "build/windows/${{ matrix.arch }}/runner/Debug" } else { "build/windows/${{ matrix.arch }}/runner/Release" }
+          cd $buildPath
+          Compress-Archive -Path * -DestinationPath "../../../../../$zipName"
         shell: pwsh
 
       - name: 上传构建产物到 Actions
         uses: actions/upload-artifact@v4
         with:
-          name: loopback_manager-windows-${{ matrix.arch }}-${{ steps.tag.outputs.tag }}
-          path: loopback_manager-windows-${{ matrix.arch }}.zip
+          name: loopback_manager-windows-${{ matrix.arch }}-${{ matrix.mode }}
+          path: loopback_manager-windows-${{ matrix.arch }}${{ matrix.mode == 'debug' && '-debug' || '' }}.zip
           retention-days: 90
 
-      # ✅ x64 任务：创建标签 + Release
+  release:
+    name: 创建 GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: ./dist
+
+      - name: 生成版本标签
+        id: tag
+        run: |
+          datetime=$(date -u +"%Y.%m.%d.%H.%M")
+          echo "tag=v${datetime}" >> $GITHUB_OUTPUT
+          echo "datetime=${datetime}" >> $GITHUB_OUTPUT
+
       - name: 创建 Git 标签
-        if: matrix.arch == 'x64'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag ${{ steps.tag.outputs.tag }}
           git push origin ${{ steps.tag.outputs.tag }}
-        shell: pwsh
 
-      - name: 创建 GitHub Release（初始发布）
-        if: matrix.arch == 'x64'
+      - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -101,27 +124,17 @@ jobs:
             **提交哈希**: ${{ github.sha }}
 
             ### 📦 下载
-            - Windows x64 版本
-            - Windows ARM64 版本
+            - Windows x64 Release
+            - Windows x64 Debug
+            - Windows ARM64 Release
+            - Windows ARM64 Debug
 
-            ### ⚠️ 注意
-            这是自动构建版本，可能包含未充分测试的功能。
+            ⚠️ 这是自动构建版本，可能包含未充分测试的功能。
 
             ---
             自动生成于 GitHub Actions
-          files: loopback_manager-windows-x64.zip
+          files: ./dist/**/*.zip
           draft: false
           prerelease: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # ✅ ARM64 任务：追加上传产物到已存在的 Release
-      - name: 附加上传 ARM64 版本到 Release
-        if: matrix.arch == 'arm64'
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: loopback_manager-windows-arm64.zip
-          append_body: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
