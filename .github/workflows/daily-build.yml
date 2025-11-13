@@ -50,7 +50,7 @@ jobs:
         run: dart run slang
 
       - name: 构建 Windows 版本
-        run: flutter build windows --release --target-platform windows-${{ matrix.arch }}
+        run: flutter build windows --release
 
       - name: 生成版本标签
         id: tag
