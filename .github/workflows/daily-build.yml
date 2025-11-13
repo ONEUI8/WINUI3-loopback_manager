@@ -53,8 +53,17 @@ jobs:
       - name: 生成多语言文件
         run: dart run slang
 
+      - name: 诊断 Flutter 环境
+        run: flutter doctor -v
+
+      - name: 显示 Rust 工具链信息
+        run: |
+          rustc --version
+          cargo --version
+          rustup show
+
       - name: 构建 Windows 版本
-        run: flutter build windows --release
+        run: flutter build windows --release -v
 
       - name: 生成版本标签
         id: tag
