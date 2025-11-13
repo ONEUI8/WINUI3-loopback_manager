@@ -14,11 +14,7 @@ dependencies:
   win32: ^5.5.0
   provider: ^6.1.1
   shared_preferences: ^2.2.2
-  rinf:
-    git:
-      url: https://github.com/ONEUI8/rinf-mod.git
-      path: flutter_package
-      ref: 6ae953f3  
+  rinf: ^8.7.2
       
   meta: ^1.16.0
   tuple: ^2.0.2
