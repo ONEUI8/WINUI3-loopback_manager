@@ -55,8 +55,6 @@ jobs:
 
       - name: 构建 Windows 版本
         run: flutter build windows --release -v
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.rust-target }}
 
       - name: 生成版本标签
         id: tag
