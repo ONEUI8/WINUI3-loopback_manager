@@ -37,14 +37,21 @@ jobs:
           fi
           echo "pkg=$pkg" >> $GITHUB_OUTPUT
 
-      - name: 读取 pubspec.yaml 版本号
+      - name: 读取 pubspec.yaml 主版本号
         id: ver
         run: |
-          version=$(grep '^version:' pubspec.yaml | awk '{print $2}')
-          echo "📦 应用版本号: $version"
-          if [ -z "$version" ]; then
+          raw=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+          echo "🔍 原始版本号: $raw"
+
+          if [ -z "$raw" ]; then
             echo "::warning::无法从 pubspec.yaml 找到 version 字段"
+            echo "version=" >> $GITHUB_OUTPUT
+            exit 0
           fi
+
+          version="${raw%%+*}"
+
+          echo "📦 主版本号: $version"
           echo "version=$version" >> $GITHUB_OUTPUT
 
       - name: 生成版本标签
@@ -159,7 +166,7 @@ jobs:
         with:
           path: artifacts
 
-      - name: 发布构建产物到 Release
+      - name: 预发布构建产物
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
@@ -174,6 +181,5 @@ jobs:
 
           files: artifacts/**/*.zip
           prerelease: true
-          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
