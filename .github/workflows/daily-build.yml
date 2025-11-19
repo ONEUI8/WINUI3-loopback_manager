@@ -182,5 +182,6 @@ jobs:
           files: artifacts/**/*.zip
           prerelease: true
           overwrite_files: true
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
