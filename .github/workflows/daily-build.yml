@@ -5,7 +5,7 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 0 * * *"  # 每天凌晨 0 点（UTC）
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
@@ -13,44 +13,27 @@ permissions:
 
 jobs:
   build:
-    name: 构建 ${{ matrix.arch }} (${{ matrix.mode }})
+    name: 构建 ${{ matrix.arch }}
     strategy:
       matrix:
         include:
           - arch: x64
             runs-on: windows-latest
-            rust-target: x86_64-pc-windows-msvc
-            mode: release
-          - arch: x64
-            runs-on: windows-latest
-            rust-target: x86_64-pc-windows-msvc
-            mode: debug
           - arch: arm64
             runs-on: windows-11-arm
-            rust-target: aarch64-pc-windows-msvc
-            mode: release
-          - arch: arm64
-            runs-on: windows-11-arm
-            rust-target: aarch64-pc-windows-msvc
-            mode: debug
     runs-on: ${{ matrix.runs-on }}
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v5
 
       - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: master
-          cache: false
 
       - name: 配置 Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust-target }}
 
       - name: 安装 Flutter 依赖
         run: flutter pub get
@@ -63,23 +46,31 @@ jobs:
       - name: 生成多语言文件
         run: dart run slang
 
-      - name: 构建 Windows 版本 (${{ matrix.mode }})
-        run: flutter build windows --${{ matrix.mode }} -v
+      - name: 构建 Release & Debug
+        run: |
+          flutter build windows --release -v
+          flutter build windows --debug -v
 
       - name: 打包构建产物
-        run: |
-          $suffix = if ("${{ matrix.mode }}" -eq "debug") { "-debug" } else { "" }
-          $zipName = "loopback_manager-windows-${{ matrix.arch }}$suffix.zip"
-          $buildPath = if ("${{ matrix.mode }}" -eq "debug") { "build/windows/${{ matrix.arch }}/runner/Debug" } else { "build/windows/${{ matrix.arch }}/runner/Release" }
-          cd $buildPath
-          Compress-Archive -Path * -DestinationPath "../../../../../$zipName"
         shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-      - name: 上传构建产物到 Actions
+          $arch = "${{ matrix.arch }}"
+
+          Compress-Archive `
+            -Path "build/windows/$arch/runner/Release/*" `
+            -DestinationPath "dist/loopback_manager-windows-$arch.zip"
+
+          Compress-Archive `
+            -Path "build/windows/$arch/runner/Debug/*" `
+            -DestinationPath "dist/loopback_manager-windows-$arch-debug.zip"
+
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: loopback_manager-windows-${{ matrix.arch }}-${{ matrix.mode }}
-          path: loopback_manager-windows-${{ matrix.arch }}${{ matrix.mode == 'debug' && '-debug' || '' }}.zip
+          name: loopback_manager-${{ matrix.arch }}
+          path: dist/*.zip
           retention-days: 90
 
   release:
@@ -88,15 +79,11 @@ jobs:
     needs: build
 
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v5
 
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          path: ./dist
+          path: artifacts
 
       - name: 生成版本标签
         id: tag
@@ -105,14 +92,7 @@ jobs:
           echo "tag=v${datetime}" >> $GITHUB_OUTPUT
           echo "datetime=${datetime}" >> $GITHUB_OUTPUT
 
-      - name: 创建 Git 标签
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag ${{ steps.tag.outputs.tag }}
-          git push origin ${{ steps.tag.outputs.tag }}
-
-      - name: 创建 GitHub Release
+      - name: 发布到 GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
@@ -133,8 +113,8 @@ jobs:
 
             ---
             自动生成于 GitHub Actions
-          files: ./dist/**/*.zip
-          draft: false
+          files: artifacts/**/*.zip
           prerelease: true
+          overwrite: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
