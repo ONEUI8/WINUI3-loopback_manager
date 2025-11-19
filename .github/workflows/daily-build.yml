@@ -12,8 +12,40 @@ permissions:
   contents: write
 
 jobs:
+  # ------------ 提前准备（读取包名 & 生成 tag） ------------
+  prepare:
+    name: 准备构建信息
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      datetime: ${{ steps.tag.outputs.datetime }}
+      pkg: ${{ steps.pkg.outputs.pkg }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 读取 pubspec.yaml 包名
+        id: pkg
+        run: |
+          pkg=$(grep '^name:' pubspec.yaml | awk '{print $2}')
+          if [ -z "$pkg" ]; then
+            echo "Cannot find package name in pubspec.yaml" >&2
+            exit 1
+          fi
+          echo "pkg=$pkg" >> $GITHUB_OUTPUT
+
+      - name: 生成版本标签
+        id: tag
+        run: |
+          datetime=$(date -u +"%Y.%m.%d.%H.%M")
+          echo "tag=v${datetime}" >> $GITHUB_OUTPUT
+          echo "datetime=${datetime}" >> $GITHUB_OUTPUT
+
+  # ------------ 构建 job（依赖 prepare） ------------
   build:
     name: 构建 Windows-${{ matrix.arch }}
+    needs: prepare
     strategy:
       matrix:
         include:
@@ -46,67 +78,72 @@ jobs:
       - name: 生成多语言文件
         run: dart run slang
 
-      - name: 构建 Release & Debug
+      - name: 构建应用程序
         run: |
           flutter build windows --release -v
           flutter build windows --debug -v
 
       - name: 打包构建产物
         shell: pwsh
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PKG: ${{ needs.prepare.outputs.pkg }}
+          ARCH: ${{ matrix.arch }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $arch = "${{ matrix.arch }}"
 
-          Compress-Archive `
-            -Path "build/windows/$arch/runner/Release/*" `
-            -DestinationPath "dist/loopback_manager-windows-$arch.zip"
+          $pkg = $env:PKG
+          $tag = $env:TAG
+          $arch = $env:ARCH
 
-          Compress-Archive `
-            -Path "build/windows/$arch/runner/Debug/*" `
-            -DestinationPath "dist/loopback_manager-windows-$arch-debug.zip"
+          $releaseZip = "${pkg}-windows-${tag}-${arch}.zip"
+          $debugZip   = "${pkg}-windows-${tag}-${arch}-debug.zip"
+
+          # Release
+          Compress-Archive -Path "build/windows/$arch/runner/Release/*" `
+            -DestinationPath "dist/$releaseZip"
+
+          # Debug
+          Compress-Archive -Path "build/windows/$arch/runner/Debug/*" `
+            -DestinationPath "dist/$debugZip"
+
+          Write-Host "Generated: dist\$releaseZip"
+          Write-Host "Generated: dist\$debugZip"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: loopback_manager-${{ matrix.arch }}
+          # artifact 名称包含包名 / arch / tag，便于区分
+          name: ${{ needs.prepare.outputs.pkg }}-windows-${{ matrix.arch }}-${{ needs.prepare.outputs.tag }}
           path: dist/*.zip
-          retention-days: 90
+          retention-days: 7
 
+  # ------------ Release（使用 prepare 输出的 tag & pkg） ------------
   release:
     name: 发布 Release（自动上传产物）
+    needs: [prepare, build]
     runs-on: ubuntu-latest
-    needs: build
 
     steps:
-      - uses: actions/checkout@v5
+      - name: 检出代码
+        uses: actions/checkout@v5
 
-      - uses: actions/download-artifact@v4
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: 读取 pubspec.yaml 包名
-        id: pkg
-        run: |
-          pkg=$(grep '^name:' pubspec.yaml | awk '{print $2}')
-          echo "pkg=$pkg" >> $GITHUB_OUTPUT
-
-      - name: 生成版本标签
-        id: tag
-        run: |
-          datetime=$(date -u +"%Y.%m.%d.%H.%M")
-          echo "tag=v${datetime}" >> $GITHUB_OUTPUT
-          echo "datetime=${datetime}" >> $GITHUB_OUTPUT
 
       - name: 发布构建产物到 Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: 日常构建 ${{ steps.tag.outputs.datetime }}
+          # 使用提前生成的 tag（softprops 会在必要时创建该 tag）
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: 日常构建 ${{ needs.prepare.outputs.datetime }}
           body: |
             ## 🚀 日常自动构建
 
-            **包名**: `${{ steps.pkg.outputs.pkg }}`
-            **构建时间**: ${{ steps.tag.outputs.datetime }}
+            **包名**: `${{ needs.prepare.outputs.pkg }}`
+            **构建时间**: ${{ needs.prepare.outputs.datetime }}
             **提交哈希**: ${{ github.sha }}
 
           files: artifacts/**/*.zip
