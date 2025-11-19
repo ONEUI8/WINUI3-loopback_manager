@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build:
-    name: 构建 ${{ matrix.arch }}
+    name: Windows 构建 ${{ matrix.arch }}
     strategy:
       matrix:
         include:
