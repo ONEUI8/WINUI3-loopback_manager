@@ -167,7 +167,7 @@ jobs:
           path: artifacts
 
       - name: 预发布构建产物
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: 日常构建 ${{ needs.prepare.outputs.datetime }}
@@ -181,5 +181,6 @@ jobs:
 
           files: artifacts/**/*.zip
           prerelease: true
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
