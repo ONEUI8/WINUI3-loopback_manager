@@ -145,12 +145,6 @@ jobs:
           
           Write-Host "✅ 所有依赖安装完成"
 
-      - name: 运行预构建脚本
-        shell: pwsh
-        run: |
-          Write-Host "🔧 正在运行预构建脚本..."
-          dart run scripts/prebuild.dart
-
       - name: 生成 Rust 桥接代码
         run: rinf gen
 
