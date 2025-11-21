@@ -73,24 +73,26 @@ jobs:
       - name: 验证版本一致性
         run: |
           tag_version="${{ steps.tag.outputs.tag }}"
-          pubspec_version="${{ steps.ver.outputs.version }}"
           
           # 移除 tag 中的 'v' 前缀
           tag_version_clean="${tag_version#v}"
           
-          echo "🔍 版本对比："
-          echo "  Tag 版本:      $tag_version_clean"
-          echo "  pubspec 版本:  $pubspec_version"
+          # 始终从 pubspec.yaml 读取实际版本号（不使用缓存的输出）
+          actual_pubspec_version=$(grep '^version:' pubspec.yaml | awk '{print $2}' | cut -d'+' -f1)
           
-          if [ "$tag_version_clean" != "$pubspec_version" ]; then
+          echo "🔍 版本对比："
+          echo "  Tag 版本:           $tag_version_clean"
+          echo "  pubspec.yaml 版本:  $actual_pubspec_version"
+          
+          if [ "$tag_version_clean" != "$actual_pubspec_version" ]; then
             echo ""
             echo "❌ 错误：版本号不一致！"
             echo ""
-            echo "推送的 tag 版本 ($tag_version) 与 pubspec.yaml 中的版本 ($pubspec_version) 不匹配。"
+            echo "推送的 tag 版本 ($tag_version) 与 pubspec.yaml 中的实际版本 ($actual_pubspec_version) 不匹配。"
             echo ""
             echo "请执行以下操作之一："
             echo "  1. 更新 pubspec.yaml 中的版本号为 $tag_version_clean"
-            echo "  2. 删除当前 tag 并推送正确的 tag: v$pubspec_version"
+            echo "  2. 删除当前 tag 并推送正确的 tag: v$actual_pubspec_version"
             echo ""
             exit 1
           fi
