@@ -228,8 +228,8 @@ jobs:
             echo "自 $previous_tag 以来的所有提交："
             echo ""
             
-            # 列出所有提交（按时间倒序）
-            git log $previous_tag..HEAD --pretty=format:"- %s (\`%h\`) - %an, %ar" --no-merges
+            # 列出所有提交（包含完整信息）
+            git log $previous_tag..HEAD --no-merges --pretty=format:"### %s%n%n**提交**: \`%h\` | **作者**: %an | **时间**: %ar%n%n%b%n---" | sed '/^$/d'
             
             echo ""
             echo ""
