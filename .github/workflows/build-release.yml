@@ -20,85 +20,284 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  # ------------ 提前准备（读取包名 & 版本号） ------------
+  prepare:
+    name: 准备构建信息
+    runs-on: ubuntu-latest
+    outputs:
+      pkg: ${{ steps.pkg.outputs.pkg }}
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.tag.outputs.tag }}
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: 读取 pubspec.yaml 包名
+        id: pkg
+        run: |
+          pkg=$(grep '^name:' pubspec.yaml | awk '{print $2}')
+          echo "🔍 检测到包名: $pkg"
+          if [ -z "$pkg" ]; then
+            echo "::error::无法从 pubspec.yaml 找到包名"
+            exit 1
+          fi
+          echo "pkg=$pkg" >> $GITHUB_OUTPUT
+
+      - name: 读取或生成版本号
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            version="${{ github.event.inputs.version }}"
+            echo "📝 手动指定版本: $version"
+          else
+            raw=$(grep '^version:' pubspec.yaml | awk '{print $2}')
+            version="${raw%%+*}"
+            echo "📦 从 pubspec.yaml 读取版本: $version"
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+
+      - name: 确定 Tag 名称
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            tag="v${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            tag="${{ github.ref_name }}"
+          else
+            tag="v${{ steps.ver.outputs.version }}"
+          fi
+          echo "🏷️ Tag 名称: $tag"
+          echo "tag=$tag" >> $GITHUB_OUTPUT
+
+      - name: 验证版本一致性
+        run: |
+          tag_version="${{ steps.tag.outputs.tag }}"
+          pubspec_version="${{ steps.ver.outputs.version }}"
+          
+          # 移除 tag 中的 'v' 前缀
+          tag_version_clean="${tag_version#v}"
+          
+          echo "🔍 版本对比："
+          echo "  Tag 版本:      $tag_version_clean"
+          echo "  pubspec 版本:  $pubspec_version"
+          
+          if [ "$tag_version_clean" != "$pubspec_version" ]; then
+            echo ""
+            echo "❌ 错误：版本号不一致！"
+            echo ""
+            echo "推送的 tag 版本 ($tag_version) 与 pubspec.yaml 中的版本 ($pubspec_version) 不匹配。"
+            echo ""
+            echo "请执行以下操作之一："
+            echo "  1. 更新 pubspec.yaml 中的版本号为 $tag_version_clean"
+            echo "  2. 删除当前 tag 并推送正确的 tag: v$pubspec_version"
+            echo ""
+            exit 1
+          fi
+          
+          echo "✅ 版本号验证通过"
+
+  # ------------ 构建 job（依赖 prepare） ------------
+  build:
+    name: 构建 Windows-${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            runs-on: windows-latest
+          - arch: arm64
+            runs-on: windows-11-arm
+    runs-on: ${{ matrix.runs-on }}
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 输出构建信息
+        shell: pwsh
+        run: |
+          Write-Host "============================================"
+          Write-Host "📦 包名:        ${{ needs.prepare.outputs.pkg }}"
+          Write-Host "⏫ 版本号:      ${{ needs.prepare.outputs.version }}"
+          Write-Host "🏷️ Tag:         ${{ needs.prepare.outputs.tag }}"
+          Write-Host "🖥️ 架构:        ${{ matrix.arch }}"
+          Write-Host "============================================"
 
       - name: 配置 Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          cache: false
+          channel: master
 
       - name: 配置 Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
 
-      - name: 获取应用版本
-        id: version
+      - name: 安装项目依赖
         shell: pwsh
         run: |
-          if ("${{ github.event.inputs.version }}" -ne "") {
-            $version = "${{ github.event.inputs.version }}"
-            echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-            echo "Version (manual): $version"
-          } else {
-            $content = Get-Content pubspec.yaml
-            $version = ($content | Select-String 'version: (.+)').Matches.Groups[1].Value
-            $version = $version.Split('+')[0]
-            echo "VERSION=$version" >> $env:GITHUB_OUTPUT
-            echo "Version (from pubspec): $version"
-          }
+          Write-Host "📦 正在安装项目依赖..."
+          
+          Write-Host "  ➤ 安装 Flutter 主项目依赖"
+          flutter pub get
+          
+          Write-Host "  ➤ 安装 rinf_cli"
+          cargo install rinf_cli
+          
+          Write-Host "✅ 所有依赖安装完成"
 
-      - name: 安装 Flutter 依赖
-        run: flutter pub get
+      - name: 运行预构建脚本
+        shell: pwsh
+        run: |
+          Write-Host "🔧 正在运行预构建脚本..."
+          dart run scripts/prebuild.dart
 
       - name: 生成 Rust 桥接代码
-        run: cargo install rinf_cli && rinf gen
+        run: rinf gen
 
       - name: 生成多语言文件
         run: dart run slang
 
-      - name: 构建 Windows x64
-        run: flutter build windows --release
-
-      - name: 创建发布压缩包
+      - name: 构建应用程序
         shell: pwsh
         run: |
-          $version = "${{ steps.version.outputs.VERSION }}"
-          $archiveName = "loopback_manager_windows_x64_${version}.zip"
-          
-          $buildPath = "build/windows/x64/runner/Release"
-          if (-not (Test-Path $buildPath)) {
-            Write-Error "Build path not found: $buildPath"
-            exit 1
-          }
-          
-          cd $buildPath
-          Compress-Archive -Path * -DestinationPath "../../../../../$archiveName"
-          cd ../../../../../
-          
-          echo "ARCHIVE_NAME=$archiveName" >> $env:GITHUB_ENV
-          echo "Archive created: $archiveName"
+          Write-Host "🏗️ 正在构建 Release 版本..."
+          flutter build windows --release -v
+
+      - name: 打包构建产物
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PKG: ${{ needs.prepare.outputs.pkg }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+          $pkg = $env:PKG
+          $version = $env:VERSION
+          $arch = $env:ARCH
+
+          Write-Host "🔧 打包：包名=$pkg  版本=$version 架构=$arch"
+
+          $releaseZip = "${pkg}-windows-${arch}-v${version}.zip"
+
+          Compress-Archive -Path "build/windows/$arch/runner/Release/*" `
+            -DestinationPath "dist/$releaseZip"
+
+          Write-Host "📦 产物文件: dist/$releaseZip"
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: loopback_manager_windows_x64
-          path: ${{ env.ARCHIVE_NAME }}
+          name: ${{ needs.prepare.outputs.pkg }}-windows-${{ matrix.arch }}
+          path: dist/*.zip
+          retention-days: 90
 
-      - name: 创建发布
-        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
-        uses: softprops/action-gh-release@v1
+  # ------------ 创建正式发布 ------------
+  release:
+    name: 创建正式发布
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', steps.version.outputs.VERSION) || github.ref_name }}
-          name: ${{ github.event_name == 'workflow_dispatch' && format('Release v{0}', steps.version.outputs.VERSION) || github.ref_name }}
-          files: ${{ env.ARCHIVE_NAME }}
-          generate_release_notes: true
+          fetch-depth: 0
+
+      - name: 生成更新日志
+        id: changelog
+        run: |
+          echo "📝 正在生成更新日志..."
+          
+          # 获取上一个正式版 tag
+          previous_tag=$(git tag --sort=-version:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 2 | tail -n 1)
+          current_tag="${{ needs.prepare.outputs.tag }}"
+          
+          if [ -z "$previous_tag" ]; then
+            echo "⚠️  未找到上一个版本 tag，使用首个提交"
+            previous_tag=$(git rev-list --max-parents=0 HEAD)
+          fi
+          
+          echo "📍 版本范围: $previous_tag → $current_tag"
+          
+          # 生成提交日志（简单列表）
+          {
+            echo "## 📋 更新日志"
+            echo ""
+            echo "自 $previous_tag 以来的所有提交："
+            echo ""
+            
+            # 列出所有提交（按时间倒序）
+            git log $previous_tag..HEAD --pretty=format:"- %s (\`%h\`) - %an, %ar" --no-merges
+            
+            echo ""
+            echo ""
+            
+            # 提交统计
+            commit_count=$(git rev-list --count $previous_tag..HEAD --no-merges)
+            echo "---"
+            echo ""
+            echo "**本次更新包含 $commit_count 个提交**"
+            
+          } > changelog.md
+          
+          # 输出到 GitHub Actions
+          {
+            echo 'changelog<<EOF'
+            cat changelog.md
+            echo EOF
+          } >> $GITHUB_OUTPUT
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: Release ${{ needs.prepare.outputs.tag }}
+          body: |
+            ## 🎉 ${{ needs.prepare.outputs.pkg }} ${{ needs.prepare.outputs.version }} 正式版
+            
+            > 🎯 这是经过测试的稳定版本，推荐所有用户更新。
+            
+            ### 📦 构建信息
+            
+            | 项目 | 内容 |
+            |------|------|
+            | **包名** | `${{ needs.prepare.outputs.pkg }}` |
+            | **版本号** | `${{ needs.prepare.outputs.version }}` |
+            | **提交哈希** | [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) |
+            
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ---
+            
+            ### 📥 下载说明
+            
+            - **x64**: 适用于 Intel/AMD 64位处理器（推荐）
+            - **arm64**: 适用于 ARM64 处理器
+            
+            ### 🔧 系统要求
+            
+            - **操作系统**: Windows 10 1809+ (64-bit)
+            - **磁盘空间**: 至少 100 MB
+            
+            ### 📝 安装说明
+            
+            1. 下载对应架构的 ZIP 文件
+            2. 解压到合适的目录
+            3. 运行可执行文件
+            
+            ### ⚠️ 重要提示
+            
+            - 如遇到问题，请查看项目文档或提交 Issue
+            - 反馈问题时请附上相关日志文件
+
+          files: artifacts/**/*.zip
           draft: false
           prerelease: false
         env:
