@@ -124,8 +124,8 @@ jobs:
           echo "📍 版本范围: $previous_tag → $current_tag"
           echo ""
           
-          # 定义要忽略的提交模式
-          IGNORE_PATTERNS="^ci:|^ci\(|^chore\(ci\)|^chore\(workflow\)|^\[ci\]|^\[workflow\]|^workflow:|^github action|^update.*workflow|^fix.*workflow|^bump.*action"
+          # 定义要忽略的文件路径模式
+          IGNORE_FILE_PATTERNS="^\.github/|^scripts/|\.yml$|\.yaml$|^README|^LICENSE|^\.gitignore|^\.metadata|^analysis_options\.yaml|^pubspec\.lock$"
           
           # 生成提交日志
           {
@@ -133,7 +133,7 @@ jobs:
             echo ""
             echo "自 $previous_tag 以来的功能和修复："
             echo ""
-            echo "> 💡 已自动过滤 CI/Workflow 相关的维护性提交"
+            echo "> 💡 已自动过滤 CI/Workflow/文档 相关的维护性提交"
             echo ""
 
             # 获取所有提交并处理
@@ -141,23 +141,61 @@ jobs:
             filtered_count=0
             included_count=0
             
-            # 使用简单的方式获取提交信息，避免 null 字节问题
-            git log $previous_tag..HEAD --no-merges --pretty=format:"%H|%s|%an|%ar" | while IFS='|' read -r hash subject author time; do
+            # 获取所有提交哈希
+            commit_hashes=$(git rev-list $previous_tag..HEAD --no-merges)
+            
+            # 遍历每个提交
+            for hash in $commit_hashes; do
               total_count=$((total_count + 1))
               
-              # 检查是否匹配忽略模式（不区分大小写）
-              if echo "$subject" | grep -qiE "$IGNORE_PATTERNS"; then
+              # 获取提交涉及的文件列表
+              changed_files=$(git diff-tree --no-commit-id --name-only -r "$hash")
+              
+              # 检查是否所有文件都匹配忽略模式
+              should_ignore=true
+              for file in $changed_files; do
+                if ! echo "$file" | grep -qE "$IGNORE_FILE_PATTERNS"; then
+                  should_ignore=false
+                  break
+                fi
+              done
+              
+              # 如果所有文件都是要忽略的类型，跳过这个提交
+              if [ "$should_ignore" = true ]; then
                 filtered_count=$((filtered_count + 1))
                 continue
               fi
               
               included_count=$((included_count + 1))
               
+              # 获取提交信息
+              commit_info=$(git log -1 --pretty=format:"%s|%an|%ar" "$hash")
+              subject=$(echo "$commit_info" | cut -d'|' -f1)
+              author=$(echo "$commit_info" | cut -d'|' -f2)
+              time=$(echo "$commit_info" | cut -d'|' -f3)
+              
               # 输出格式化的提交信息
               echo "### $subject"
               echo ""
               echo "**提交**: \`${hash:0:7}\` | **作者**: $author | **时间**: $time"
               echo ""
+              
+              # 显示涉及的主要文件（排除忽略的文件）
+              main_files=""
+              for file in $changed_files; do
+                if ! echo "$file" | grep -qE "$IGNORE_FILE_PATTERNS"; then
+                  if [ -z "$main_files" ]; then
+                    main_files="$file"
+                  else
+                    main_files="$main_files, $file"
+                  fi
+                fi
+              done
+              
+              if [ -n "$main_files" ]; then
+                echo "**涉及文件**: $main_files"
+                echo ""
+              fi
               
               # 获取提交正文（如果有的话）
               body=$(git log -1 --pretty=format:"%b" "$hash" | sed '/^$/d')
@@ -173,9 +211,9 @@ jobs:
             echo "---"
             echo ""
             echo "**统计信息**"
-            echo "- 📊 总提交数: $(git rev-list $previous_tag..HEAD --no-merges --count)"
-            echo "- ✅ 功能/修复提交: $(git log $previous_tag..HEAD --no-merges --pretty=format:"%s" | grep -vicE "$IGNORE_PATTERNS" || echo "0")"
-            echo "- 🔧 CI/维护提交: $(git log $previous_tag..HEAD --no-merges --pretty=format:"%s" | grep -icE "$IGNORE_PATTERNS" || echo "0") (已过滤)"
+            echo "- 📊 总提交数: $total_count"
+            echo "- ✅ 功能/修复提交: $included_count"
+            echo "- 🔧 CI/维护提交: $filtered_count (已过滤)"
 
           } > changelog.md
           
